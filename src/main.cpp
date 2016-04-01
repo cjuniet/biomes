@@ -1,10 +1,8 @@
 #include "simplexnoise.hpp"
 #include <SFML/Graphics.hpp>
+#include <cmath>
 #include <memory>
 #include <vector>
-
-const int SCREEN_WIDTH = 1920;
-const int SCREEN_HEIGHT = 1080;
 
 namespace details {
 constexpr float lerp(float a, float b, float x) { return (b - a) * x + a; }
@@ -79,12 +77,13 @@ struct Tile {
 
 int main(int argc, char* argv[])
 {
-  sf::RenderWindow window(sf::VideoMode(SCREEN_WIDTH, SCREEN_HEIGHT), "Biomes", sf::Style::Fullscreen);
+  sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
+  sf::RenderWindow window(desktop, "Biomes", sf::Style::Fullscreen);
   window.setVerticalSyncEnabled(true);
   window.setMouseCursorVisible(false);
 
-  const int nb_tiles_x = (int)std::ceil((float)SCREEN_WIDTH / Tile::WIDTH) + 2;
-  const int nb_tiles_y = (int)std::ceil((float)SCREEN_HEIGHT / Tile::HEIGHT) + 2;
+  const int nb_tiles_x = (int)std::ceil((float)desktop.width / Tile::WIDTH) + 2;
+  const int nb_tiles_y = (int)std::ceil((float)desktop.height / Tile::HEIGHT) + 2;
 
   std::vector<std::unique_ptr<Tile>> tiles;
   for (int y = 0; y < nb_tiles_y; ++y) {
