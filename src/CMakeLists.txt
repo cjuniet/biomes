@@ -1,10 +1,9 @@
 set(EXECUTABLE biomes)
 
 if(MSVC)
-  add_definitions("/D_CRT_SECURE_NO_WARNINGS")
   set(CMAKE_EXE_LINKER_FLAGS "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 else()
-  add_definitions(-Wall -O2 -g)
+  add_compile_options(-Wall -O2 -g)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)

@@ -5,6 +5,8 @@
 #include <vector>
 
 namespace details {
+const float scale = 0.001f;
+const float sea_level = 0.05f;
 constexpr float lerp(float a, float b, float x) { return (b - a) * x + a; }
 constexpr float unlerp(float a, float b, float x) { return (x - a) / (b - a); }
 constexpr float clamp(float x, float min, float max) { return (x > max ? max : (x < min ? min : x)); }
@@ -40,7 +42,6 @@ sf::Color get_heatmap_color(float value)
 
 void generate_noise(sf::Image& image, float xpos, float ypos)
 {
-  const float scale = 0.002f;
   for (unsigned int y = 0; y < image.getSize().y; ++y) {
     for (unsigned int x = 0; x < image.getSize().x; ++x) {
       const float noise = simplex::fBm2D((float)x + xpos, (float)y + ypos, scale);
@@ -50,8 +51,18 @@ void generate_noise(sf::Image& image, float xpos, float ypos)
 }
 } // namespace details
 
+////////////////////////////////////////////////////////////////
+
+enum DIRECTIONS {
+  DIR_UP = 1, DIR_RIGHT = 2, DIR_DOWN = 4, DIR_LEFT = 8,
+  DIR_UP_RIGHT = DIR_UP | DIR_RIGHT,
+  DIR_UP_LEFT = DIR_UP | DIR_LEFT,
+  DIR_DOWN_RIGHT = DIR_DOWN | DIR_RIGHT,
+  DIR_DOWN_LEFT = DIR_DOWN | DIR_LEFT
+};
+
 struct Tile {
-  enum { WIDTH = 64, HEIGHT = 64 };
+  enum SIZE { WIDTH = 64, HEIGHT = 64 };
 
   int map_x;
   int map_y;
@@ -75,10 +86,109 @@ struct Tile {
   }
 };
 
+////////////////////////////////////////////////////////////////
+
+class Boat : public sf::Drawable
+{
+  sf::Texture texture;
+  sf::Sprite ship;
+  sf::Sprite trail;
+  int w, h, n, t;
+  int nbtrails;
+  bool afloat;
+  float x, y;
+  float _speed;
+
+public:
+  Boat(const std::string& asset, int w, int h, int n, float speed = 4.0f)
+    : w(w), h(h), n(0), t(0), nbtrails(n - 1), afloat(false), x(0), y(0), _speed(speed)
+  {
+    texture.loadFromFile(asset);
+
+    ship.setTexture(texture);
+    ship.setTextureRect({ 0, 0, w, h });
+    ship.setOrigin(w / 2.0f, h / 2.0f);
+    ship.scale(0.5f, 0.5f);
+
+    if (nbtrails > 0) {
+      trail.setTexture(texture);
+      trail.setTextureRect({ w, 0, w, h });
+      trail.setOrigin(w / 2.0f, h / 2.0f);
+      trail.scale(0.5f, 0.5f);
+    }
+  }
+
+  float speed() const { return _speed; }
+  void speed(float speed) { _speed = speed; }
+
+  void position(float posx, float posy)
+  {
+    ship.setPosition(posx, posy);
+    trail.setPosition(posx, posy);
+    x = ship.getPosition().x;
+    y = ship.getPosition().y;
+  }
+
+  bool move(int direction)
+  {
+    if (!direction) return false;
+
+    auto oldx = x, oldy = y;
+    //FIXME: normalise diagonal movement
+    if (direction & DIR_UP)  y -= _speed;
+    if (direction & DIR_DOWN) y += _speed;
+    if (direction & DIR_RIGHT) x += _speed;
+    if (direction & DIR_LEFT) x -= _speed;
+
+    auto c = simplex::fBm2D(x, y, details::scale);
+    if (afloat && c >= details::sea_level) {
+      x = oldx; y = oldy;
+      return false;
+    }
+    if (!afloat && c <= details::sea_level) {
+      afloat = true;
+    }
+
+    float angle = 0;
+    switch (direction) {
+      case DIR_UP: angle = 0; break;
+      case DIR_UP_RIGHT: angle = 45; break;
+      case DIR_RIGHT: angle = 90; break;
+      case DIR_DOWN_RIGHT: angle = 135; break;
+      case DIR_DOWN: angle = 180; break;
+      case DIR_DOWN_LEFT: angle = -135; break;
+      case DIR_LEFT: angle = -90; break;
+      case DIR_UP_LEFT: angle = -45; break;
+    }
+    ship.setRotation(angle);
+    trail.setRotation(angle);
+    return true;
+  }
+
+  void update()
+  {
+    ++t;
+    if (t >= 10) {
+      n = (n + 1) % nbtrails;
+      trail.setTextureRect({ (1 + n) * w , 0, w, h });
+      t = 0;
+    }
+  }
+
+  void draw(sf::RenderTarget& target, sf::RenderStates states) const override
+  {
+    if (afloat && nbtrails > 0) target.draw(trail, states);
+    target.draw(ship, states);
+  }
+};
+
+////////////////////////////////////////////////////////////////
+
 int main(int argc, char* argv[])
 {
   sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
   sf::RenderWindow window(desktop, "Biomes", sf::Style::Fullscreen);
+
   window.setVerticalSyncEnabled(true);
   window.setMouseCursorVisible(false);
 
@@ -95,36 +205,45 @@ int main(int argc, char* argv[])
     }
   }
 
+  // Original asset made by Csaba Felvegi under CC-BY 3.0
+  // http://opengameart.org/content/ships-with-ripple-effect
+  Boat boat("assets/ship.png", 84, 226, 6);
+  boat.position(desktop.width / 2.0f, desktop.height / 2.0f);
+
   while (window.isOpen()) {
     sf::Event event;
     while (window.pollEvent(event)) {
       if (event.type == sf::Event::Closed) {
         window.close();
       }
-      if (event.type == sf::Event::KeyPressed && (event.key.code == sf::Keyboard::Q || event.key.code == sf::Keyboard::Escape)) {
-        window.close();
+      if (event.type == sf::Event::KeyPressed) {
+        if (event.key.code == sf::Keyboard::Q || event.key.code == sf::Keyboard::Escape) {
+          window.close();
+        }
       }
     }
 
-    float speed = 8;
-    float offset_x = 0;
-    float offset_y = 0;
+    int direction = 0;
     if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) {
-      offset_y += speed;
+      direction |= DIR_UP;
     }
     if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) {
-      offset_y -= speed;
-    }
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) {
-      offset_x += speed;
+      direction |= DIR_DOWN;
     }
     if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) {
-      offset_x -= speed;
+      direction |= DIR_RIGHT;
+    }
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) {
+      direction |= DIR_LEFT;
     }
 
-    if (offset_x || offset_y) {
+    if (boat.move(direction)) {
       for (auto& tile : tiles) {
-        tile->sprite.move(offset_x, offset_y);
+        //FIXME: normalise diagonal movement
+        if (direction & DIR_UP) tile->sprite.move(0, boat.speed());
+        if (direction & DIR_DOWN) tile->sprite.move(0, -boat.speed());
+        if (direction & DIR_RIGHT) tile->sprite.move(-boat.speed(), 0);
+        if (direction & DIR_LEFT) tile->sprite.move(boat.speed(), 0);
 
         const auto pos = tile->sprite.getPosition();
         if (pos.x + Tile::WIDTH < -Tile::WIDTH) {
@@ -148,6 +267,10 @@ int main(int argc, char* argv[])
     for (auto& tile : tiles) {
       window.draw(tile->sprite);
     }
+
+    boat.update();
+    window.draw(boat);
+
     window.display();
   }
 
